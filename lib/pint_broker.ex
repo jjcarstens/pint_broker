@@ -131,7 +131,12 @@ defmodule PintBroker do
         if length(matching) > 0 do
           Logger.warning("[PintBroker] closing duplicate client: #{conn.client_id}")
           :gen_tcp.close(socket)
-          Enum.each(matching, &:gen_tcp.close/1)
+
+          state =
+            Enum.reduce(matching, state, fn sock, acc ->
+              :gen_tcp.close(sock)
+              handle_close(sock, acc)
+            end)
 
           {:noreply, state}
         else
@@ -187,6 +192,15 @@ defmodule PintBroker do
   end
 
   def handle_info({:tcp_closed, socket}, state) do
+    {:noreply, handle_close(socket, state)}
+  end
+
+  def handle_info(msg, state) do
+    Logger.debug("[PintBroker] Got unknown message #{inspect(msg)}")
+    {:noreply, state}
+  end
+
+  defp handle_close(socket, state) do
     {deleted, sockets} = Map.pop(state.sockets, socket)
     state = %{state | sockets: sockets}
 
@@ -194,12 +208,7 @@ defmodule PintBroker do
       handle_publish(last_will, state)
     end
 
-    {:noreply, state}
-  end
-
-  def handle_info(msg, state) do
-    Logger.debug("[PintBroker] Got unknown message #{inspect(msg)}")
-    {:noreply, state}
+    state
   end
 
   defp send_package(socket, package) do

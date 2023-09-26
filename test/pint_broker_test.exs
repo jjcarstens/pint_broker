@@ -65,6 +65,10 @@ defmodule PintBrokerTest do
 
     assert {:noreply, updated} = PintBroker.handle_info({:tcp, socket, connect}, @state)
     assert %{conn: %Package.Connect{client_id: "howdy"}} = updated.sockets[socket]
+
+    # Duplicate connect closes connection
+    assert {:noreply, updated2} = PintBroker.handle_info({:tcp, socket, connect}, updated)
+    refute updated2.sockets[socket]
   end
 
   test "tracks subscriptions" do
