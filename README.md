@@ -1,5 +1,8 @@
 # PintBroker 🍺
 
+[![CircleCI](https://circleci.com/gh/jjcarstens/pint_broker.svg?style=svg)](https://circleci.com/gh/jjcarstens/pint_broker)
+[![Hex version](https://img.shields.io/hexpm/v/pint_broker.svg "Hex version")](https://hex.pm/packages/pint_broker)
+
 A simple, pint-sized MQTT broker that can be used for testing and development
 
 > **Warning**
