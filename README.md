@@ -2,15 +2,13 @@
 
 A simple, pint-sized MQTT broker that can be used for testing and development
 
-## Usage
-
 > **Warning**
 >
 > This is not indended for production use and makes no attempts for large
 > connection scaling and handling. It is also not considered feature complete,
 > but handles most simple use cases.
 
-Supported:
+**Supported:**
 
 * Simple, unencrypted TCP connections
 * [MQTT v3.1.1](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.pdf)
@@ -19,7 +17,7 @@ Supported:
   * Ping requests
   * Rule forwarding (see below)
 
-Unsupported:
+**Unsupported:**
 
 * SSL connections
 * QoS 1 and 2
@@ -59,3 +57,12 @@ iex> flush()
   retain: false
 }
 ```
+
+## Why _another_ broker?
+
+There are many full-featured MQTT brokers out there, but they require a lot of
+setup and configuration, maybe some dependencies, and tend to be overkill for
+testing of MQTT interactions between client and servers. I wanted the simplest
+possible broker which did not require a full ops team to implement a test
+environment that clients could connect to and publish/subscribe to topics for
+improved MQTT unit testing and local development of the whole system.

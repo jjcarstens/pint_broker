@@ -8,8 +8,22 @@ defmodule PintBroker do
   > large connection scaling and handling. It is also not considered
   > feature complete, but handles most simple use cases.
 
-  This currently only supports simple, unencrypted TCP connections. You
-  can specify custom `:gen_tcp` options in `:overrides` key when starting
+  **Supported:**
+
+  * Simple, unencrypted TCP connections
+  * [MQTT v3.1.1](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.pdf)
+    * QoS 0
+    * Connect, publish, subscribe, and unsubscribe
+    * Ping requests
+    * Rule forwarding (see below)
+
+  **Unsupported:**
+
+  * SSL connections
+  * QoS 1 and 2
+  * [MQTT v5](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.pdf)
+
+  You can specify custom `:gen_tcp` options with `:overrides` key when starting
   the server.
 
   ## Rule forwarding
@@ -24,12 +38,27 @@ defmodule PintBroker do
 
   **Example:**
 
-  ```
-  handler = fn pub ->
-    Broadway.test_message(MyBroadway, pub.payload)
-  end
+  ```elixir
+  iex> s = self()
 
-  PintBroker.start_link(rules: [{"my/+/test/topic", handler}])
+  iex> handler1 = fn pub -> send(s, pub) end
+
+  iex> PintBroker.start_link(rules: [{"my/+/test/topic", handler1}])
+  {:ok, #PID<0.226.0>}
+
+  # You can publish from the broker or another client
+  iex> PintBroker.publish("my/first/test/topic", "hello world")
+
+  iex> flush()
+  %Tortoise311.Package.Publish{
+    __META__: %Tortoise311.Package.Meta{opcode: 3, flags: 0},
+    identifier: nil,
+    topic: "my/first/test/topic",
+    payload: "hello world",
+    qos: 0,
+    dup: false,
+    retain: false
+  }
   ```
   """
   use GenServer
