@@ -9,7 +9,8 @@ defmodule PintBroker.MixProject do
       start_permanent: Mix.env() == :prod,
       description: description(),
       deps: deps(),
-      dialyzer: dialyzer()
+      dialyzer: dialyzer(),
+      package: package()
     ]
   end
 
@@ -35,6 +36,12 @@ defmodule PintBroker.MixProject do
     [
       flags: [:missing_return, :extra_return, :unmatched_returns, :error_handling, :underspecs],
       list_unused_filters: true
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 end
