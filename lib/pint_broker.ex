@@ -35,8 +35,8 @@ defmodule PintBroker do
   use GenServer
 
   alias Tortoise311.Package
-  alias Tortoise311.Package.Connect
   alias Tortoise311.Package.Connack
+  alias Tortoise311.Package.Connect
   alias Tortoise311.Package.Pingreq
   alias Tortoise311.Package.Pingresp
   alias Tortoise311.Package.Puback
@@ -124,71 +124,15 @@ defmodule PintBroker do
 
   @impl GenServer
   def handle_info({:tcp, socket, data}, state) do
-    case Package.decode(data) do
-      %Connect{client_id: id} = conn ->
-        matching = for {s, %{conn: %{client_id: ^id}}} <- state.sockets, do: s
+    packet =
+      try do
+        Package.decode(data)
+      catch
+        _, _ ->
+          data
+      end
 
-        if length(matching) > 0 do
-          Logger.warning("[PintBroker] closing duplicate client: #{conn.client_id}")
-          :gen_tcp.close(socket)
-
-          state =
-            Enum.reduce(matching, state, fn sock, acc ->
-              :gen_tcp.close(sock)
-              handle_close(sock, acc)
-            end)
-
-          {:noreply, state}
-        else
-          send_package(socket, %Connack{session_present: false, status: :accepted})
-          attrs = %{conn: conn, subscriptions: []}
-
-          {:noreply, put_in(state, [:sockets, socket], attrs)}
-        end
-
-      %Subscribe{} = sub when is_map_key(state.sockets, socket) ->
-        acks = for {_topic, qos} <- sub.topics, do: {:ok, qos}
-
-        send_package(socket, %Suback{identifier: sub.identifier, acks: acks})
-
-        # Sort lowest QoS first so that uniq_by will ensure lowest QoS is kept
-        subs =
-          (state.sockets[socket][:subscriptions] ++ sub.topics)
-          |> Enum.sort()
-          |> Enum.uniq_by(fn {t, _qos} -> t end)
-
-        {:noreply, put_in(state, [:sockets, socket, :subscriptions], subs)}
-
-      %Unsubscribe{} = unsub when is_map_key(state.sockets, socket) ->
-        subs =
-          state.sockets[socket][:subscriptions]
-          |> Enum.reject(fn {t, _qos} -> t in unsub.topics end)
-
-        send_package(socket, %Unsuback{identifier: unsub.identifier})
-
-        {:noreply, put_in(state, [:sockets, socket, :subscriptions], subs)}
-
-      %Publish{} = pub when is_map_key(state.sockets, socket) ->
-        # Handle QoS 2?
-        if pub.qos == 1, do: send_package(socket, %Puback{identifier: pub.identifier})
-
-        handle_publish(pub, state)
-        {:noreply, state}
-
-      %Pingreq{} when is_map_key(state.sockets, socket) ->
-        send_package(socket, %Pingresp{})
-        {:noreply, state}
-
-      data ->
-        Logger.debug("[PintBroker] Unhandled packet - #{inspect(data, limit: :infinity)}")
-
-        {:noreply, state}
-    end
-  catch
-    _, _ ->
-      Logger.debug("[PintBroker] Failed to parse package - #{inspect(data, limit: :infinity)}")
-
-      {:noreply, state}
+    {:noreply, handle_packet(packet, socket, state)}
   end
 
   def handle_info({:tcp_closed, socket}, state) do
@@ -198,6 +142,81 @@ defmodule PintBroker do
   def handle_info(msg, state) do
     Logger.debug("[PintBroker] Got unknown message #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  defp handle_packet(%Connect{client_id: id} = conn, socket, state) do
+    matching = for {s, %{conn: %{client_id: ^id}}} <- state.sockets, do: s
+
+    if length(matching) > 0 do
+      Logger.warning("[PintBroker] closing duplicate client: #{conn.client_id}")
+      :gen_tcp.close(socket)
+
+      Enum.reduce(matching, state, fn sock, acc ->
+        :gen_tcp.close(sock)
+        handle_close(sock, acc)
+      end)
+    else
+      send_packet(socket, %Connack{session_present: false, status: :accepted})
+      attrs = %{conn: conn, subscriptions: []}
+
+      put_in(state, [:sockets, socket], attrs)
+    end
+  end
+
+  defp handle_packet(%_{} = packet, socket, state) when not is_map_key(state.sockets, socket) do
+    Logger.debug(
+      "[PintBroker] Missing MQTT Connect. Ignoring - #{inspect(packet, limit: :infinity)}"
+    )
+
+    state
+  end
+
+  defp handle_packet(%Subscribe{} = sub, socket, state) do
+    acks = for {_topic, qos} <- sub.topics, do: {:ok, qos}
+
+    send_packet(socket, %Suback{identifier: sub.identifier, acks: acks})
+
+    # Sort lowest QoS first so that uniq_by will ensure lowest QoS is kept
+    subs =
+      (state.sockets[socket][:subscriptions] ++ sub.topics)
+      |> Enum.sort()
+      |> Enum.uniq_by(fn {t, _qos} -> t end)
+
+    put_in(state, [:sockets, socket, :subscriptions], subs)
+  end
+
+  defp handle_packet(%Unsubscribe{} = unsub, socket, state) do
+    subs =
+      state.sockets[socket][:subscriptions]
+      |> Enum.reject(fn {t, _qos} -> t in unsub.topics end)
+
+    send_packet(socket, %Unsuback{identifier: unsub.identifier})
+
+    put_in(state, [:sockets, socket, :subscriptions], subs)
+  end
+
+  defp handle_packet(%Publish{} = pub, socket, state) do
+    # Handle QoS 2?
+    if pub.qos == 1, do: send_packet(socket, %Puback{identifier: pub.identifier})
+
+    handle_publish(pub, state)
+    state
+  end
+
+  defp handle_packet(%Pingreq{}, socket, state) do
+    send_packet(socket, %Pingresp{})
+    state
+  end
+
+  defp handle_packet(%_{} = packet, socket, state) do
+    id = state.sockets[socket][:conn].client_id
+    Logger.debug("[PintBroker] Unhandled packet for client #{id} - #{inspect(packet)}")
+    state
+  end
+
+  defp handle_packet(raw, _socket, state) do
+    Logger.info("[PintBroker] Failed to parse packet - #{inspect(raw, limit: :infinity)}")
+    state
   end
 
   defp handle_close(socket, state) do
@@ -211,7 +230,7 @@ defmodule PintBroker do
     state
   end
 
-  defp send_package(socket, package) do
+  defp send_packet(socket, package) do
     case :gen_tcp.send(socket, Package.encode(package)) do
       {:error, err} ->
         Logger.warning(
@@ -276,9 +295,8 @@ defmodule PintBroker do
   defp accept(listen, broker) do
     # This function is called recursively to accept new connections
     # and pass off control to the broker process
-    with {:ok, socket} <- :gen_tcp.accept(listen),
-         :ok <- :gen_tcp.controlling_process(socket, broker) do
-      :ok
+    with {:ok, socket} <- :gen_tcp.accept(listen) do
+      :gen_tcp.controlling_process(socket, broker)
     end
 
     accept(listen, broker)

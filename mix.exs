@@ -8,7 +8,8 @@ defmodule PintBroker.MixProject do
       elixir: "~> 1.11",
       start_permanent: Mix.env() == :prod,
       description: description(),
-      deps: deps()
+      deps: deps(),
+      dialyzer: dialyzer()
     ]
   end
 
@@ -20,11 +21,20 @@ defmodule PintBroker.MixProject do
 
   defp deps do
     [
+      {:credo, "~> 1.7", only: :dev},
+      {:dialyxir, "~> 1.4", only: :dev},
       {:tortoise311, "~> 0.11"}
     ]
   end
 
   defp description do
     "A simple, pint-sized MQTT broker that can be used for testing and development"
+  end
+
+  defp dialyzer do
+    [
+      flags: [:missing_return, :extra_return, :unmatched_returns, :error_handling, :underspecs],
+      list_unused_filters: true
+    ]
   end
 end

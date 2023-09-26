@@ -118,7 +118,7 @@ defmodule PintBrokerTest do
     assert_receive(^pub, 1000)
   end
 
-  test "ignores unhandled packets" do
+  test "Requires initial MQTT connect before using parsable packets" do
     # # Ignores other packets
     unhandled_packet_log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -128,17 +128,32 @@ defmodule PintBrokerTest do
                  PintBroker.handle_info({:tcp, fake_socket(), unhandled}, @state)
       end)
 
-    assert unhandled_packet_log =~ ~r/Unhandled packet/
+    assert unhandled_packet_log =~ ~r/Missing MQTT Connect/
   end
 
-  test "ignores unknown data" do
+  test "ignores unhandled packets" do
+    # # Ignores other packets
+    unhandled_packet_log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        unhandled = encode(%Package.Pubcomp{identifier: 3295})
+        socket = fake_socket()
+        state = put_in(@state.sockets[socket], %{conn: %{client_id: "howdy"}})
+
+        assert {:noreply, @state} =
+                 PintBroker.handle_info({:tcp, socket, unhandled}, state)
+      end)
+
+    assert unhandled_packet_log =~ ~r/Unhandled packet for client howdy/
+  end
+
+  test "ignores unparsable packets" do
     bad_data_log =
       ExUnit.CaptureLog.capture_log(fn ->
         assert {:noreply, @state} =
                  PintBroker.handle_info({:tcp, fake_socket(), <<1, 2, 3, 4>>}, @state)
       end)
 
-    assert bad_data_log =~ ~r/Failed to parse package/
+    assert bad_data_log =~ ~r/Failed to parse packet/
   end
 
   test "cleans up closed sockets" do
@@ -163,7 +178,7 @@ defmodule PintBrokerTest do
     end
   end
 
-  def fake_socket() do
+  def fake_socket do
     i = System.unique_integer([:positive])
     :erlang.list_to_port(~c"#Port<0.#{i}>")
   end
