@@ -2,94 +2,8 @@ defmodule PintBroker do
   @moduledoc """
   A simple, pint-sized MQTT broker that can be used for testing and development
 
-  > #### Warning {: .warning}
-  >
-  > This is not indended for production use and makes no attempts for
-  > large connection scaling and handling. It is also not considered
-  > feature complete, but handles most simple use cases.
-
-  **Supported:**
-
-  * Simple, unencrypted TCP connections
-  * [MQTT v3.1.1](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.pdf)
-    * QoS 0
-    * Connect, publish, subscribe, and unsubscribe
-    * Ping requests
-  * [Rule forwarding](#rule-forwarding)
-  * [Lifecycle events](#lifecycle-events)
-
-  **Unsupported:**
-
-  * SSL connections
-  * QoS 1 and 2
-  * [MQTT v5](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.pdf)
-
-  You can specify custom `:gen_tcp` options with `:overrides` key when starting
-  the server.
-
-  ## Rule forwarding
-
-  Many production setups will have a few topics with rules that forward
-  messages to a handler such as an SQS queue or central service. This allows
-  for scaling of many devices to communicate with a few nodes. For testing,
-  you can specify rules when starting the broker which will forward
-  `Tortoise311.Package.Publish` structs to a handler function or process in
-  order to mimic this rule forwarding behavior. See `add_rule/3` for more
-  information.
-
-  **Example:**
-
-  ```elixir
-  iex> s = self()
-
-  iex> handler1 = fn pub -> send(s, pub) end
-
-  iex> PintBroker.start_link(rules: [{"my/+/test/topic", handler1}])
-  {:ok, #PID<0.226.0>}
-
-  # You can publish from the broker or another client
-  iex> PintBroker.publish("my/first/test/topic", "hello world")
-
-  iex> flush()
-  %Tortoise311.Package.Publish{
-    __META__: %Tortoise311.Package.Meta{opcode: 3, flags: 0},
-    identifier: nil,
-    topic: "my/first/test/topic",
-    payload: "hello world",
-    qos: 0,
-    dup: false,
-    retain: false
-  }
-  ```
-
-  ## Lifecycle events
-
-  Many broker setups have mechanism to subscribe to connect/disconnect events,
-  such as the [AWS IoT Lifecycle events](https://docs.aws.amazon.com/iot/latest/developerguide/life-cycle-events.html)
-  which are typically configured in the infrastructure to be forwarded to
-  a central handler or SQS queue.
-
-  PintBroker also supports this behavior by starting with `:on_connect` and
-  `:on_disconnect` options to register a callback function that receives
-  the `:client_id` of the connection.
-
-  An example for replicating the AWS IoT Lifecyle events:
-
-  ```elixir
-  on_connect = fn client_id ->
-    payload = %{clientId: client_id, eventType: :connected}
-    Broadway.test_message(:my_broadway, Jason.encode!(payload))
-  end
-
-  on_disconnect = fn client_id ->
-    payload = %{clientId: client_id, eventType: :disconnected, disconnectReason: "CONNECTION_LOST"}
-    Broadway.test_message(:my_broadway, Jason.encode!(payload))
-  end
-
-  PintBroker.start_link(on_connect: on_connect, on_disconnect: on_disconnect)
-  ```
-
-  The callback returns are ignored.
+  See [the README](https://hexdocs.pm/pint_broker/readme.html) for more information
+  on usage, features, and configuration
   """
   use GenServer
 
@@ -123,7 +37,12 @@ defmodule PintBroker do
 
   @default_transport_opts [mode: :binary, packet: :raw, active: true, reuseaddr: true]
 
-  @doc false
+  @doc """
+  Start and link a PintBroker
+
+  See `PintBroker.opt()` and [Configuration](https://hexdocs.pm/pint_broker/readme.html#configuration)
+  for more info about configuring the broker
+  """
   @spec start_link([opt()]) :: GenServer.on_start()
   def start_link(opts) do
     name = opts[:name] || __MODULE__
@@ -133,16 +52,7 @@ defmodule PintBroker do
   @doc """
   Add a topic filter rule with handler
 
-  In many broker implementations, there are a few routing rules that forward
-  messages from specific topics to a handler such as an SQS queue or central
-  service in a fan-in pattern for scaling many remote devices to a few nodes.
-
-  Many times the topic runs through a full SQL query before forwarding the
-  message on. However, that is unsupported in this simple server. Instead
-  you can provide a simple topic filter and a handler function or process
-  which will receive the Tortoise311.Package.Publish struct that can be split
-  apart by your logic to formulate into the end result needed (such as mimicing
-  an SQS queue message in your producer)
+  See [Rule forwarding](https://hexdocs.pm/pint_broker/readme.html#rule-forwarding) for more info
   """
   @spec add_rule(GenServer.server(), Tortoise311.topic_filter(), pid() | function()) :: :ok
   def add_rule(server \\ __MODULE__, topic, handler)

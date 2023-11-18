@@ -5,8 +5,7 @@
 
 A simple, pint-sized MQTT broker that can be used for testing and development
 
-> **Warning**
->
+> [!WARNING]
 > This is not indended for production use and makes no attempts for large
 > connection scaling and handling. It is also not considered feature complete,
 > but handles most simple use cases.
@@ -39,7 +38,7 @@ supervision tree for the most control and flexibility.
 
 > [!IMPORTANT]
 > Ensure there is no `:pint_broker` key in your `config.exs` as that
-> is used in determining to start the broker as an OTP application
+> is used to determine starting the broker as an OTP application
 
 Pass any of the supported [configuration options](#configuration) as
 part of the child spec:
@@ -70,7 +69,7 @@ The following configuration options are supported:
 * `:overrides` - additional options to pass to `:gen_tcp.listen/2`. These take
   precedence and are unchecked. Be careful using this since it can break other options.
 
-### Rule forwarding
+## Rule forwarding
 
 Many production setups will have a few topics with rules that forward
 messages to a handler such as an SQS queue or central service. This allows
@@ -105,7 +104,7 @@ iex> flush()
 }
 ```
 
-### Lifecycle events
+## Lifecycle events
 
 Many broker setups have mechanism to subscribe to connect/disconnect events,
 such as the [AWS IoT Lifecycle events](https://docs.aws.amazon.com/iot/latest/developerguide/life-cycle-events.html)

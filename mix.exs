@@ -13,6 +13,7 @@ defmodule PintBroker.MixProject do
       description: description(),
       deps: deps(),
       dialyzer: dialyzer(),
+      name: "PintBroker 🍺",
       docs: docs(),
       package: package(),
       preferred_cli_env: %{
@@ -52,12 +53,35 @@ defmodule PintBroker.MixProject do
 
   defp docs do
     [
+      api_reference: false,
       extras: ["README.md", "CHANGELOG.md"],
       main: "readme",
+      markdown_processor: __MODULE__,
       source_ref: "v#{@version}",
       source_url: @source_url,
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
+  end
+
+  # Used to convert GitHub alerts to ExDoc admonitions
+  def to_ast(text, opts) do
+    regex = ~r/> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/
+
+    text =
+      Regex.replace(regex, text, fn _line, gh_admon ->
+        ex_admon =
+          case gh_admon do
+            "NOTE" <> _ -> ".neutral"
+            "TIP" <> _ -> ".tip"
+            "IMPORTANT" <> _ -> ".info"
+            "WARNING" <> _ -> ".warning"
+            "CAUTION" <> _ -> ".error"
+          end
+
+        "> #### #{String.capitalize(gh_admon)} {: #{ex_admon}}"
+      end)
+
+    ExDoc.Markdown.Earmark.to_ast(text, opts)
   end
 
   defp package do
