@@ -3,12 +3,25 @@ defmodule PintBrokerTest do
 
   alias Tortoise311.Package
 
-  @state %{sockets: %{}, rules: []}
+  setup do
+    ok = fn _ -> :ok end
+    state = %{sockets: %{}, rules: [], on_connect: ok, on_disconnect: ok}
+    %{state: state}
+  end
 
   @tag :integration
   test "handles MQTT packets", %{test: test} do
+    test_pid = self()
     port = 1883
-    server = start_supervised!({PintBroker, port: port, name: test})
+
+    opts = [
+      port: port,
+      on_connect: fn c -> send(test_pid, {:on_connect, c}) end,
+      on_disconnect: fn c -> send(test_pid, {:on_disconnect, c}) end,
+      name: test
+    ]
+
+    server = start_supervised!({PintBroker, opts})
 
     # Can connect to server
     assert {:ok, socket} = :gen_tcp.connect(~c"localhost", port, active: true, mode: :binary)
@@ -17,6 +30,8 @@ defmodule PintBrokerTest do
     :gen_tcp.send(socket, encode(%Package.Connect{client_id: "howdy"}))
     assert_receive({:tcp, ^socket, data}, 1000)
     assert %Package.Connack{status: :accepted} = Package.decode(data)
+    # on_connect callback is called with successful connection
+    assert_receive({:on_connect, "howdy"})
 
     # subscribe to topic
     subscribe = encode(%Package.Subscribe{identifier: 1234, topics: [{"hello", 1}]})
@@ -57,13 +72,15 @@ defmodule PintBrokerTest do
     # Duplicate connect acks closes connection
     :gen_tcp.send(socket, encode(%Package.Connect{client_id: "howdy"}))
     assert_receive({:tcp_closed, ^socket})
+    # on_disconnect called with socket close
+    assert_receive({:on_disconnect, "howdy"})
   end
 
-  test "connect packet tracks socket" do
+  test "connect packet tracks socket", %{state: state} do
     socket = fake_socket()
     connect = encode(%Package.Connect{client_id: "howdy"})
 
-    assert {:noreply, updated} = PintBroker.handle_info({:tcp, socket, connect}, @state)
+    assert {:noreply, updated} = PintBroker.handle_info({:tcp, socket, connect}, state)
     assert %{conn: %Package.Connect{client_id: "howdy"}} = updated.sockets[socket]
 
     # Duplicate connect closes connection
@@ -71,10 +88,10 @@ defmodule PintBrokerTest do
     refute updated2.sockets[socket]
   end
 
-  test "tracks subscriptions" do
+  test "tracks subscriptions", %{state: state} do
     socket = fake_socket()
     subscribe = encode(%Package.Subscribe{identifier: 1234, topics: [{"hello", 0}]})
-    state = put_in(@state.sockets[socket], %{subscriptions: []})
+    state = put_in(state.sockets[socket], %{subscriptions: []})
 
     assert {:noreply, updated} = PintBroker.handle_info({:tcp, socket, subscribe}, state)
     assert %{subscriptions: [{"hello", 0}]} = updated.sockets[socket]
@@ -85,23 +102,23 @@ defmodule PintBrokerTest do
     assert %{subscriptions: [{"hello", 0}]} = updated2.sockets[socket]
   end
 
-  test "unsubscribe topics" do
+  test "unsubscribe topics", %{state: state} do
     socket = fake_socket()
     subscribe = encode(%Package.Unsubscribe{identifier: 1234, topics: ["hello"]})
-    state = put_in(@state.sockets[socket], %{subscriptions: [{"hello", 0}]})
+    state = put_in(state.sockets[socket], %{subscriptions: [{"hello", 0}]})
 
     assert {:noreply, updated} = PintBroker.handle_info({:tcp, socket, subscribe}, state)
     assert %{subscriptions: []} = updated.sockets[socket]
   end
 
-  test "publishes messages to rules" do
+  test "publishes messages to rules", %{state: state} do
     socket = fake_socket()
     pub = %Package.Publish{topic: "hello", payload: "world"}
 
     test_pid = self()
 
     state = %{
-      @state
+      state
       | sockets: %{socket => %{}},
         rules: [
           {"hello", fn packet -> send(test_pid, {:fn1, packet}) end},
@@ -118,50 +135,50 @@ defmodule PintBrokerTest do
     assert_receive(^pub, 1000)
   end
 
-  test "Requires initial MQTT connect before using parsable packets" do
+  test "Requires initial MQTT connect before using parsable packets", %{state: state} do
     # # Ignores other packets
     unhandled_packet_log =
       ExUnit.CaptureLog.capture_log(fn ->
         unhandled = encode(%Package.Pubcomp{identifier: 3295})
 
-        assert {:noreply, @state} =
-                 PintBroker.handle_info({:tcp, fake_socket(), unhandled}, @state)
+        assert {:noreply, ^state} =
+                 PintBroker.handle_info({:tcp, fake_socket(), unhandled}, state)
       end)
 
     assert unhandled_packet_log =~ ~r/Missing MQTT Connect/
   end
 
-  test "ignores unhandled packets" do
+  test "ignores unhandled packets", %{state: state} do
     # # Ignores other packets
     unhandled_packet_log =
       ExUnit.CaptureLog.capture_log(fn ->
         unhandled = encode(%Package.Pubcomp{identifier: 3295})
         socket = fake_socket()
-        state = put_in(@state.sockets[socket], %{conn: %{client_id: "howdy"}})
+        state = put_in(state.sockets[socket], %{conn: %{client_id: "howdy"}})
 
-        assert {:noreply, @state} =
+        assert {:noreply, ^state} =
                  PintBroker.handle_info({:tcp, socket, unhandled}, state)
       end)
 
     assert unhandled_packet_log =~ ~r/Unhandled packet for client howdy/
   end
 
-  test "ignores unparsable packets" do
+  test "ignores unparsable packets", %{state: state} do
     bad_data_log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:noreply, @state} =
-                 PintBroker.handle_info({:tcp, fake_socket(), <<1, 2, 3, 4>>}, @state)
+        assert {:noreply, ^state} =
+                 PintBroker.handle_info({:tcp, fake_socket(), <<1, 2, 3, 4>>}, state)
       end)
 
     assert bad_data_log =~ ~r/Failed to parse packet/
   end
 
-  test "cleans up closed sockets" do
+  test "cleans up closed sockets", %{state: state} do
     socket = fake_socket()
 
-    state = put_in(@state.sockets[socket], %{howdy: :partner})
+    with_socket = put_in(state.sockets[socket], %{howdy: :partner})
 
-    assert {:noreply, @state} = PintBroker.handle_info({:tcp_closed, socket}, state)
+    assert {:noreply, ^state} = PintBroker.handle_info({:tcp_closed, socket}, with_socket)
   end
 
   defp encode(package) do

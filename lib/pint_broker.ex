@@ -15,7 +15,8 @@ defmodule PintBroker do
     * QoS 0
     * Connect, publish, subscribe, and unsubscribe
     * Ping requests
-    * Rule forwarding (see below)
+  * [Rule forwarding](#rule-forwarding)
+  * [Lifecycle events](#lifecycle-events)
 
   **Unsupported:**
 
@@ -60,6 +61,35 @@ defmodule PintBroker do
     retain: false
   }
   ```
+
+  ## Lifecycle events
+
+  Many broker setups have mechanism to subscribe to connect/disconnect events,
+  such as the [AWS IoT Lifecycle events](https://docs.aws.amazon.com/iot/latest/developerguide/life-cycle-events.html)
+  which are typically configured in the infrastructure to be forwarded to
+  a central handler or SQS queue.
+
+  PintBroker also supports this behavior by starting with `:on_connect` and
+  `:on_disconnect` options to register a callback function that receives
+  the `:client_id` of the connection.
+
+  An example for replicating the AWS IoT Lifecyle events:
+
+  ```elixir
+  on_connect = fn client_id ->
+    payload = %{clientId: client_id, eventType: :connected}
+    Broadway.test_message(:my_broadway, Jason.encode!(payload))
+  end
+
+  on_disconnect = fn client_id ->
+    payload = %{clientId: client_id, eventType: :disconnected, disconnectReason: "CONNECTION_LOST"}
+    Broadway.test_message(:my_broadway, Jason.encode!(payload))
+  end
+
+  PintBroker.start_link(on_connect: on_connect, on_disconnect: on_disconnect)
+  ```
+
+  The callback returns are ignored.
   """
   use GenServer
 
@@ -88,8 +118,10 @@ defmodule PintBroker do
           | {:name, GenServer.name()}
           | {:overrides, :gen_tcp.option()}
           | {:rules, [rule()]}
+          | {:on_connect, (client_id :: String.t() -> :ok)}
+          | {:on_disconnect, (client_id :: String.t() -> :ok)}
 
-  @default_opts [mode: :binary, packet: :raw, active: true, reuseaddr: true]
+  @default_transport_opts [mode: :binary, packet: :raw, active: true, reuseaddr: true]
 
   @doc false
   @spec start_link([opt()]) :: GenServer.on_start()
@@ -128,16 +160,65 @@ defmodule PintBroker do
 
   @impl GenServer
   def init(opts) do
-    port = opts[:port] || 1883
-    tcp_opts = Keyword.merge(@default_opts, opts[:overrides] || [])
-    {:ok, listen} = :gen_tcp.listen(port, tcp_opts)
+    opts =
+      scrub_opts(opts, [])
+      |> Keyword.put_new(:port, 1883)
+
+    transport_opts = Keyword.merge(@default_transport_opts, opts[:overrides] || [])
+    {:ok, listen} = :gen_tcp.listen(opts[:port], transport_opts)
 
     broker = self()
     acceptor = spawn(fn -> accept(listen, broker) end)
 
-    state = %{opts: opts, acceptor: acceptor, sockets: %{}, rules: opts[:rules] || []}
+    state = %{
+      acceptor: acceptor,
+      on_connect: opts[:on_connect] || fn _ -> :ok end,
+      on_disconnect: opts[:on_disconnect] || fn _ -> :ok end,
+      sockets: %{},
+      rules: opts[:rules] || [],
+      transport_opts: transport_opts
+    }
 
     {:ok, state}
+  end
+
+  defp scrub_opts([], acc), do: acc
+
+  defp scrub_opts([{:port, p} = opt | rem], acc) when is_integer(p) do
+    scrub_opts(rem, [opt | acc])
+  end
+
+  defp scrub_opts([{:overrides, o} = opt | rem], acc) when is_list(o) do
+    scrub_opts(rem, [opt | acc])
+  end
+
+  defp scrub_opts([{:on_connect, fun} = opt | rem], acc) when is_function(fun, 1) do
+    scrub_opts(rem, [opt | acc])
+  end
+
+  defp scrub_opts([{:on_disconnect, fun} = opt | rem], acc) when is_function(fun, 1) do
+    scrub_opts(rem, [opt | acc])
+  end
+
+  defp scrub_opts([{:rules, r} | rem], acc) when is_list(r) do
+    rules =
+      Enum.filter(r, fn
+        {topic, handler}
+        when is_binary(topic) and
+               (is_pid(handler) or is_function(handler, 1) or is_function(handler, 2)) ->
+          {topic, handler}
+
+        invalid ->
+          Logger.warning("[PintBroker] Ignoring invalid rule: #{inspect(invalid)}")
+          false
+      end)
+
+    scrub_opts(rem, [{:rules, rules} | acc])
+  end
+
+  defp scrub_opts([invalid | rem], acc) do
+    Logger.warning("[PintBroker] Ignoring invalid option: #{inspect(invalid)}")
+    scrub_opts(rem, acc)
   end
 
   @impl GenServer
@@ -187,6 +268,7 @@ defmodule PintBroker do
     else
       send_packet(socket, %Connack{session_present: false, status: :accepted})
       attrs = %{conn: conn, subscriptions: []}
+      state.on_connect.(conn.client_id)
 
       put_in(state, [:sockets, socket], attrs)
     end
@@ -252,8 +334,9 @@ defmodule PintBroker do
     {deleted, sockets} = Map.pop(state.sockets, socket)
     state = %{state | sockets: sockets}
 
-    with %{conn: %{will: %Publish{} = last_will}} <- deleted do
-      handle_publish(last_will, state)
+    with %{conn: %{client_id: client_id, will: last_will}} <- deleted do
+      if is_struct(last_will, Publish), do: handle_publish(last_will, state)
+      state.on_disconnect.(client_id)
     end
 
     state

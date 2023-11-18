@@ -18,7 +18,8 @@ A simple, pint-sized MQTT broker that can be used for testing and development
   * QoS 0
   * Connect, publish, subscribe, and unsubscribe
   * Ping requests
-  * Rule forwarding (see below)
+* [Rule forwarding](#rule-forwarding)
+* [Lifecycle events](#lifecycle-events)
 
 **Unsupported:**
 
@@ -60,6 +61,35 @@ iex> flush()
   retain: false
 }
 ```
+
+## Lifecycle events
+
+Many broker setups have mechanism to subscribe to connect/disconnect events,
+such as the [AWS IoT Lifecycle events](https://docs.aws.amazon.com/iot/latest/developerguide/life-cycle-events.html)
+which are typically configured in the infrastructure to be forwarded to
+a central handler or SQS queue.
+
+PintBroker also supports this behavior by starting with `:on_connect` and
+`:on_disconnect` options to register a callback function that receives
+the `:client_id` of the connection.
+
+An example for replicating the AWS IoT Lifecyle events:
+
+```elixir
+on_connect = fn client_id ->
+  payload = %{clientId: client_id, eventType: :connected}
+  Broadway.test_message(:my_broadway, Jason.encode!(payload))
+end
+
+on_disconnect = fn client_id ->
+  payload = %{clientId: client_id, eventType: :disconnected, disconnectReason: "CONNECTION_LOST"}
+  Broadway.test_message(:my_broadway, Jason.encode!(payload))
+end
+
+PintBroker.start_link(on_connect: on_connect, on_disconnect: on_disconnect)
+```
+
+The callback returns are ignored.
 
 ## Why _another_ broker?
 
