@@ -126,6 +126,8 @@ defmodule PintBroker do
     scrub_opts(rem, [{:rules, rules} | acc])
   end
 
+  defp scrub_opts([{:name, _} | rem], acc), do: scrub_opts(rem, acc)
+
   defp scrub_opts([invalid | rem], acc) do
     Logger.warning("[PintBroker] Ignoring invalid option: #{inspect(invalid)}")
     scrub_opts(rem, acc)
