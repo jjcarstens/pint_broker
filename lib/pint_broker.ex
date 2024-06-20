@@ -319,9 +319,10 @@ defmodule PintBroker do
   defp accept(listen, broker) do
     # This function is called recursively to accept new connections
     # and pass off control to the broker process
-    with {:ok, socket} <- :gen_tcp.accept(listen) do
-      :gen_tcp.controlling_process(socket, broker)
-    end
+    _ =
+      with {:ok, socket} <- :gen_tcp.accept(listen) do
+        :gen_tcp.controlling_process(socket, broker)
+      end
 
     accept(listen, broker)
   end
